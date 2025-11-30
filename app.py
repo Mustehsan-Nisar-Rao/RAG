@@ -6,18 +6,18 @@ from typing import List, Dict, Any
 import chromadb
 from chromadb.utils import embedding_functions
 import google.generativeai as genai
-import patoolib  # For RAR extraction
 import requests
-import urllib.parse
+import zipfile
+import io
 
 class DataExtractor:
     def __init__(self):
-        self.rar_path = "./data.rar"
+        self.zip_path = "./data.zip"
         self.extracted_path = "./data_extracted"
-        self.github_url = "https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.rar"
+        self.github_url = "https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.zip"
         
     def download_from_github(self):
-        """Download RAR file from GitHub"""
+        """Download ZIP file from GitHub"""
         try:
             st.info("📥 Downloading data from GitHub...")
             
@@ -25,9 +25,25 @@ class DataExtractor:
             response = requests.get(self.github_url, stream=True)
             
             if response.status_code == 200:
-                with open(self.rar_path, 'wb') as f:
+                total_size = int(response.headers.get('content-length', 0))
+                
+                # Create progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                with open(self.zip_path, 'wb') as f:
+                    downloaded = 0
                     for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                progress = int(50 * downloaded / total_size)
+                                progress_bar.progress(min(progress, 100))
+                                status_text.text(f"Downloaded {downloaded}/{total_size} bytes")
+                
+                progress_bar.empty()
+                status_text.empty()
                 st.success("✅ Successfully downloaded data from GitHub")
                 return True
             else:
@@ -39,9 +55,9 @@ class DataExtractor:
             return False
         
     def extract_data(self):
-        """Extract data from RAR file"""
+        """Extract data from ZIP file"""
         # First, download the file if it doesn't exist
-        if not os.path.exists(self.rar_path):
+        if not os.path.exists(self.zip_path):
             if not self.download_from_github():
                 return False
             
@@ -49,15 +65,32 @@ class DataExtractor:
             # Create extraction directory
             os.makedirs(self.extracted_path, exist_ok=True)
             
-            # Extract RAR file
-            st.info("📦 Extracting RAR file...")
-            patoolib.extract_archive(self.rar_path, outdir=self.extracted_path)
-            st.success("✅ Successfully extracted data from RAR file")
+            # Extract ZIP file
+            st.info("📦 Extracting ZIP file...")
+            
+            with zipfile.ZipFile(self.zip_path, 'r') as zip_ref:
+                # Get file list and set up progress
+                file_list = zip_ref.namelist()
+                total_files = len(file_list)
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                # Extract all files
+                for i, file in enumerate(file_list):
+                    zip_ref.extract(file, self.extracted_path)
+                    progress = int(100 * (i + 1) / total_files)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Extracting files... {i+1}/{total_files}")
+                
+                progress_bar.empty()
+                status_text.empty()
+            
+            st.success("✅ Successfully extracted data from ZIP file")
             return True
             
         except Exception as e:
-            st.error(f"❌ Error extracting RAR file: {e}")
-            st.info("💡 Make sure patool is installed and unrar is available")
+            st.error(f"❌ Error extracting ZIP file: {e}")
             return False
 
 class SimpleDataProcessor:
@@ -69,22 +102,29 @@ class SimpleDataProcessor:
             os.path.join(base_path, "mimic-iv-ext-direct-1.0", "diagnostic_kg", "Diagnosis_flowchart"),
             os.path.join(base_path, "diagnostic_kg", "Diagnosis_flowchart"),
             os.path.join(base_path, "Diagnosis_flowchart"),
+            os.path.join(base_path, "mimic-iv-ext-direct-1.0.0", "diagnostic_kg", "Diagnosis_flowchart"),
         ]
         self.possible_case_paths = [
             os.path.join(base_path, "mimic-iv-ext-direct-1.0", "mimic-iv-ext-direct-1.0.0", "Finished"),
             os.path.join(base_path, "mimic-iv-ext-direct-1.0", "Finished"),
             os.path.join(base_path, "Finished"),
             os.path.join(base_path, "cases"),
+            os.path.join(base_path, "mimic-iv-ext-direct-1.0.0", "Finished"),
         ]
         
         self.kg_path = self._find_valid_path(self.possible_kg_paths)
         self.cases_path = self._find_valid_path(self.possible_case_paths)
+        
+        # Log found paths
+        if self.kg_path:
+            st.info(f"📁 Knowledge graph path: {self.kg_path}")
+        if self.cases_path:
+            st.info(f"📁 Cases path: {self.cases_path}")
     
     def _find_valid_path(self, possible_paths):
         """Find the first valid path that exists"""
         for path in possible_paths:
             if os.path.exists(path):
-                st.info(f"📁 Found path: {path}")
                 return path
         return None
 
@@ -123,10 +163,18 @@ class SimpleDataProcessor:
             st.info(f"💡 Checked paths: {self.possible_kg_paths}")
             return chunks
 
-        for filename in os.listdir(self.kg_path):
-            if not filename.endswith('.json'):
-                continue
+        # Set up progress
+        files = [f for f in os.listdir(self.kg_path) if f.endswith('.json')]
+        total_files = len(files)
+        
+        if total_files == 0:
+            st.warning("⚠️ No JSON files found in knowledge graph directory")
+            return chunks
+            
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
+        for i, filename in enumerate(files):
             file_path = os.path.join(self.kg_path, filename)
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -150,11 +198,19 @@ class SimpleDataProcessor:
                                 'text': f"{condition} - Symptoms: {stage_data['Symptoms']}",
                                 'metadata': {'type': 'knowledge', 'category': 'symptoms', 'condition': condition}
                             })
+                
+                # Update progress
+                progress = int(100 * (i + 1) / total_files)
+                progress_bar.progress(progress)
+                status_text.text(f"Processing knowledge files... {i+1}/{total_files}")
+                
             except Exception as e:
                 st.warning(f"⚠️ Error processing {filename}: {e}")
                 continue
 
-        st.success(f"✅ Extracted {len(chunks)} knowledge chunks")
+        progress_bar.empty()
+        status_text.empty()
+        st.success(f"✅ Extracted {len(chunks)} knowledge chunks from {total_files} files")
         return chunks
 
     def extract_patient_cases(self):
@@ -166,26 +222,46 @@ class SimpleDataProcessor:
             st.info(f"💡 Checked paths: {self.possible_case_paths}")
             return chunks
 
-        # Handle both directory structure and flat files
-        items = os.listdir(self.cases_path)
+        # Count total files for progress
+        total_files = 0
+        file_paths = []
         
-        for item in items:
+        for item in os.listdir(self.cases_path):
             item_path = os.path.join(self.cases_path, item)
-            
             if os.path.isdir(item_path):
-                # It's a directory (like Migraine/, Pneumonia/, etc.)
-                condition_folder = item
-                for filename in os.listdir(item_path):
-                    if filename.endswith('.json'):
-                        self._process_case_file(os.path.join(item_path, filename), condition_folder, chunks)
+                for root, dirs, files in os.walk(item_path):
+                    json_files = [f for f in files if f.endswith('.json')]
+                    total_files += len(json_files)
+                    for f in json_files:
+                        file_paths.append((os.path.join(root, f), item))
             elif item.endswith('.json'):
-                # It's a JSON file in the root
-                condition_folder = "General"
-                self._process_case_file(item_path, condition_folder, chunks)
+                total_files += 1
+                file_paths.append((item_path, "General"))
+
+        if total_files == 0:
+            st.warning("⚠️ No case files found")
+            return chunks
+
+        # Set up progress
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        processed_files = 0
+        for file_path, condition_folder in file_paths:
+            self._process_case_file(file_path, condition_folder, chunks)
+            processed_files += 1
+            
+            # Update progress
+            progress = int(100 * processed_files / total_files)
+            progress_bar.progress(progress)
+            status_text.text(f"Processing case files... {processed_files}/{total_files}")
+
+        progress_bar.empty()
+        status_text.empty()
 
         narratives = len([c for c in chunks if c['metadata']['type'] == 'narrative'])
         reasoning = len([c for c in chunks if c['metadata']['type'] == 'reasoning'])
-        st.success(f"✅ Extracted {narratives} narrative chunks and {reasoning} reasoning chunks")
+        st.success(f"✅ Extracted {narratives} narrative chunks and {reasoning} reasoning chunks from {total_files} case files")
         return chunks
 
     def _process_case_file(self, file_path, condition_folder, chunks):
@@ -254,6 +330,7 @@ class SimpleDataProcessor:
         kg_exists, cases_exists = self.check_data_exists()
         if not kg_exists and not cases_exists:
             st.error("❌ No valid data found after extraction.")
+            st.info("💡 Please check the ZIP file structure")
             return []
 
         # Count files
@@ -311,6 +388,10 @@ class SimpleRAGSystem:
         case_docs, case_metas, case_ids = [], [], []
 
         try:
+            total_chunks = len(self.chunks)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
             for i, chunk in enumerate(self.chunks):
                 if chunk['metadata']['type'] == 'knowledge':
                     knowledge_docs.append(chunk['text'])
@@ -320,6 +401,14 @@ class SimpleRAGSystem:
                     case_docs.append(chunk['text'])
                     case_metas.append(chunk['metadata'])
                     case_ids.append(f"case_{i}")
+
+                # Update progress
+                progress = int(100 * (i + 1) / total_chunks)
+                progress_bar.progress(progress)
+                status_text.text(f"Indexing chunks... {i+1}/{total_chunks}")
+
+            progress_bar.empty()
+            status_text.empty()
 
             # Add to collections
             if knowledge_docs:
@@ -455,7 +544,7 @@ def main():
                     chunks = processor.run()
 
                     if not chunks:
-                        st.error("❌ No data was extracted. Please check your RAR file structure.")
+                        st.error("❌ No data was extracted. Please check your data file structure.")
                         return
 
                     # Initialize RAG system
@@ -532,16 +621,19 @@ def main():
         for i, example in enumerate(examples):
             with cols[i % 2]:
                 if st.button(example, use_container_width=True):
-                    # Set the question in the text area
                     st.session_state.last_question = example
                     st.rerun()
 
         # System info
         with st.expander("📊 System Information"):
             if st.session_state.rag_system:
-                st.write(f"**Knowledge chunks:** {len([c for c in st.session_state.rag_system.chunks if c['metadata']['type'] == 'knowledge'])}")
-                st.write(f"**Case narratives:** {len([c for c in st.session_state.rag_system.chunks if c['metadata']['type'] == 'narrative'])}")
-                st.write(f"**Case reasoning:** {len([c for c in st.session_state.rag_system.chunks if c['metadata']['type'] == 'reasoning'])}")
+                knowledge_count = len([c for c in st.session_state.rag_system.chunks if c['metadata']['type'] == 'knowledge'])
+                narrative_count = len([c for c in st.session_state.rag_system.chunks if c['metadata']['type'] == 'narrative'])
+                reasoning_count = len([c for c in st.session_state.rag_system.chunks if c['metadata']['type'] == 'reasoning'])
+                
+                st.write(f"**Knowledge chunks:** {knowledge_count}")
+                st.write(f"**Case narratives:** {narrative_count}")
+                st.write(f"**Case reasoning:** {reasoning_count}")
                 st.write(f"**Total chunks:** {len(st.session_state.rag_system.chunks)}")
 
     else:
@@ -553,17 +645,8 @@ def main():
         2. 📥 Click 'Download & Extract Data' to get medical data from GitHub
         3. 🚀 Click 'Initialize System' to build the RAG system
         
-        *Note: Data will be automatically downloaded from GitHub*
+        *Data source: https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.zip*
         """)
-
-        # Data source info
-        with st.expander("📁 Data Source Information"):
-            st.markdown("""
-            **Data Source:** [GitHub Repository](https://github.com/Mustehsan-Nisar-Rao/RAG/blob/main/mimic-iv-ext-direct-1.0.rar)
-            
-            The medical data will be automatically downloaded from:
-            `https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.rar`
-            """)
 
 if __name__ == "__main__":
     main()
