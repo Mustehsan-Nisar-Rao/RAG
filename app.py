@@ -10,6 +10,9 @@ import requests
 import zipfile
 import io
 
+# Your hardcoded API key
+GEMINI_API_KEY = "AIzaSyCKd3GEjKyvasR4pPktPJVEjRMxIhy7Z2o"
+
 class DataExtractor:
     def __init__(self):
         self.zip_path = "./data.zip"
@@ -461,7 +464,8 @@ class MedicalAI:
         self.rag = rag_system
         try:
             genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            # Use a more widely available model
+            self.model = genai.GenerativeModel('gemini-pro')
         except Exception as e:
             st.error(f"Error initializing Gemini: {e}")
 
@@ -471,15 +475,15 @@ class MedicalAI:
             context_chunks = self.rag.query(question, top_k=5)
             context = "\n---\n".join(context_chunks)
 
-            # Create prompt
-            prompt = f"""You are a medical expert. Use the following medical context to answer the question accurately.
+            # Create prompt WITHOUT the "what's missing" section
+            prompt = f"""You are a medical expert. Use the following medical context to answer the question accurately and comprehensively.
 
 MEDICAL CONTEXT:
 {context}
 
 QUESTION: {question}
 
-Please provide a comprehensive medical answer based on the context. If the context doesn't contain enough information, state what's missing."""
+Please provide a comprehensive medical answer based on the context. Focus on the information available in the context."""
 
             response = self.model.generate_content(prompt)
             return response.text
@@ -509,15 +513,9 @@ def main():
     # Sidebar for configuration
     st.sidebar.header("Configuration")
     
-    # API Key input
-    if 'GEMINI_API_KEY' in st.secrets:
-        api_key = st.secrets['GEMINI_API_KEY']
-        st.sidebar.success("🔑 API key loaded from secrets")
-    else:
-        api_key = st.sidebar.text_input("Gemini API Key", type="password")
-        if not api_key:
-            st.sidebar.warning("Please enter your Gemini API key")
-
+    # Show API key status (hardcoded, no input needed)
+    st.sidebar.success("🔑 API key configured")
+    
     # Data extraction section
     st.sidebar.subheader("📁 Data Setup")
     
@@ -533,10 +531,6 @@ def main():
     # Initialize system
     if st.session_state.data_extracted and not st.session_state.initialized:
         if st.sidebar.button("🚀 Initialize System", type="primary"):
-            if not api_key:
-                st.error("❌ Please enter your Gemini API key")
-                return
-                
             try:
                 with st.spinner("🚀 Processing medical data and setting up RAG system... This may take a few minutes."):
                     # Initialize processor and extract data
@@ -552,8 +546,8 @@ def main():
                     rag_system.create_collections()
                     rag_system.index_data()
 
-                    # Initialize Medical AI
-                    st.session_state.medical_ai = MedicalAI(rag_system, api_key)
+                    # Initialize Medical AI with hardcoded API key
+                    st.session_state.medical_ai = MedicalAI(rag_system, GEMINI_API_KEY)
                     st.session_state.rag_system = rag_system
                     st.session_state.initialized = True
 
@@ -641,10 +635,10 @@ def main():
         👋 **Welcome to the Medical RAG System!**
         
         To get started:
-        1. 🔑 Enter your Gemini API key in the sidebar
-        2. 📥 Click 'Download & Extract Data' to get medical data from GitHub
-        3. 🚀 Click 'Initialize System' to build the RAG system
+        1. 📥 Click 'Download & Extract Data' to get medical data from GitHub
+        2. 🚀 Click 'Initialize System' to build the RAG system
         
+        *API key is pre-configured*
         *Data source: https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.zip*
         """)
 
