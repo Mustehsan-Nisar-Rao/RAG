@@ -7,23 +7,50 @@ import chromadb
 from chromadb.utils import embedding_functions
 import google.generativeai as genai
 import patoolib  # For RAR extraction
+import requests
+import urllib.parse
 
 class DataExtractor:
     def __init__(self):
         self.rar_path = "./data.rar"
         self.extracted_path = "./data_extracted"
+        self.github_url = "https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.rar"
+        
+    def download_from_github(self):
+        """Download RAR file from GitHub"""
+        try:
+            st.info("📥 Downloading data from GitHub...")
+            
+            # Use raw GitHub URL
+            response = requests.get(self.github_url, stream=True)
+            
+            if response.status_code == 200:
+                with open(self.rar_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                st.success("✅ Successfully downloaded data from GitHub")
+                return True
+            else:
+                st.error(f"❌ Failed to download file. HTTP Status: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            st.error(f"❌ Error downloading from GitHub: {e}")
+            return False
         
     def extract_data(self):
         """Extract data from RAR file"""
+        # First, download the file if it doesn't exist
         if not os.path.exists(self.rar_path):
-            st.error(f"❌ RAR file not found: {self.rar_path}")
-            return False
+            if not self.download_from_github():
+                return False
             
         try:
             # Create extraction directory
             os.makedirs(self.extracted_path, exist_ok=True)
             
             # Extract RAR file
+            st.info("📦 Extracting RAR file...")
             patoolib.extract_archive(self.rar_path, outdir=self.extracted_path)
             st.success("✅ Successfully extracted data from RAR file")
             return True
@@ -39,11 +66,13 @@ class SimpleDataProcessor:
         # Try different possible paths after extraction
         self.possible_kg_paths = [
             os.path.join(base_path, "mimic-iv-ext-direct-1.0", "mimic-iv-ext-direct-1.0.0", "diagnostic_kg", "Diagnosis_flowchart"),
+            os.path.join(base_path, "mimic-iv-ext-direct-1.0", "diagnostic_kg", "Diagnosis_flowchart"),
             os.path.join(base_path, "diagnostic_kg", "Diagnosis_flowchart"),
             os.path.join(base_path, "Diagnosis_flowchart"),
         ]
         self.possible_case_paths = [
             os.path.join(base_path, "mimic-iv-ext-direct-1.0", "mimic-iv-ext-direct-1.0.0", "Finished"),
+            os.path.join(base_path, "mimic-iv-ext-direct-1.0", "Finished"),
             os.path.join(base_path, "Finished"),
             os.path.join(base_path, "cases"),
         ]
@@ -404,8 +433,8 @@ def main():
     st.sidebar.subheader("📁 Data Setup")
     
     if not st.session_state.data_extracted:
-        if st.sidebar.button("📦 Extract Data from RAR", type="primary"):
-            with st.spinner("Extracting data from RAR file..."):
+        if st.sidebar.button("📥 Download & Extract Data", type="primary"):
+            with st.spinner("Downloading data from GitHub and extracting..."):
                 extractor = DataExtractor()
                 if extractor.extract_data():
                     st.session_state.data_extracted = True
@@ -521,50 +550,19 @@ def main():
         
         To get started:
         1. 🔑 Enter your Gemini API key in the sidebar
-        2. 📦 Click 'Extract Data from RAR' to unpack the medical data
+        2. 📥 Click 'Download & Extract Data' to get medical data from GitHub
         3. 🚀 Click 'Initialize System' to build the RAG system
         
-        *Note: The RAR file (data.rar) must be in the root directory.*
+        *Note: Data will be automatically downloaded from GitHub*
         """)
 
-        # Quick setup guide
-        with st.expander("📋 Setup Instructions"):
+        # Data source info
+        with st.expander("📁 Data Source Information"):
             st.markdown("""
-            **1. Get Gemini API Key:**
-            - Visit [Google AI Studio](https://aistudio.google.com/)
-            - Create an API key for Gemini
+            **Data Source:** [GitHub Repository](https://github.com/Mustehsan-Nisar-Rao/RAG/blob/main/mimic-iv-ext-direct-1.0.rar)
             
-            **2. Prepare Your Data:**
-            - Ensure your RAR file is named `data.rar`
-            - Place it in the same directory as this app
-            - The RAR should contain medical JSON files in the expected structure
-            
-            **3. Initialize:**
-            - Click the buttons in order: Extract → Initialize
-            - Wait for the processing to complete
-            """)
-
-        # File structure info
-        with st.expander("📁 Expected Data Structure in RAR"):
-            st.markdown("""
-            Your `data.rar` should contain:
-            ```
-            mimic-iv-ext-direct-1.0/
-            └── mimic-iv-ext-direct-1.0.0/
-                ├── diagnostic_kg/
-                │   └── Diagnosis_flowchart/
-                │       ├── migraine.json
-                │       ├── pneumonia.json
-                │       └── ...
-                └── Finished/
-                    ├── Migraine/
-                    │   ├── case1.json
-                    │   └── ...
-                    ├── Pneumonia/
-                    │   ├── case1.json
-                    │   └── ...
-                    └── ...
-            ```
+            The medical data will be automatically downloaded from:
+            `https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.rar`
             """)
 
 if __name__ == "__main__":
