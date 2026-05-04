@@ -1,19 +1,21 @@
-import streamlit as st
+# Disable ChromaDB telemetry to avoid errors
 import os
+os.environ['CHROMA_TELEMETRY'] = 'False'
+
+# SQLite fix for older environment
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
+import streamlit as st
 import json
-import tempfile
 from typing import List, Dict, Any
 import chromadb
 from chromadb.utils import embedding_functions
 import google.generativeai as genai
 import requests
 import zipfile
-import io
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
-# Your existing code continues here...
+import shutil
 
 # Your hardcoded API key
 GEMINI_API_KEY = "AIzaSyAouoUIyesHCHDxR3A5xRk87NoYhacs24s"
@@ -29,13 +31,11 @@ class DataExtractor:
         try:
             st.info("📥 Downloading data from GitHub...")
             
-            # Use raw GitHub URL
             response = requests.get(self.github_url, stream=True)
             
             if response.status_code == 200:
                 total_size = int(response.headers.get('content-length', 0))
                 
-                # Create progress bar
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -64,27 +64,26 @@ class DataExtractor:
         
     def extract_data(self):
         """Extract data from ZIP file"""
-        # First, download the file if it doesn't exist
         if not os.path.exists(self.zip_path):
             if not self.download_from_github():
                 return False
             
         try:
-            # Create extraction directory
+            # Clear existing extraction if it exists
+            if os.path.exists(self.extracted_path):
+                shutil.rmtree(self.extracted_path)
+            
             os.makedirs(self.extracted_path, exist_ok=True)
             
-            # Extract ZIP file
             st.info("📦 Extracting ZIP file...")
             
             with zipfile.ZipFile(self.zip_path, 'r') as zip_ref:
-                # Get file list and set up progress
                 file_list = zip_ref.namelist()
                 total_files = len(file_list)
                 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Extract all files
                 for i, file in enumerate(file_list):
                     zip_ref.extract(file, self.extracted_path)
                     progress = int(100 * (i + 1) / total_files)
@@ -104,7 +103,6 @@ class DataExtractor:
 class SimpleDataProcessor:
     def __init__(self, base_path: str):
         self.base_path = base_path
-        # Try different possible paths after extraction
         self.possible_kg_paths = [
             os.path.join(base_path, "mimic-iv-ext-direct-1.0", "mimic-iv-ext-direct-1.0.0", "diagnostic_kg", "Diagnosis_flowchart"),
             os.path.join(base_path, "mimic-iv-ext-direct-1.0", "diagnostic_kg", "Diagnosis_flowchart"),
@@ -123,28 +121,23 @@ class SimpleDataProcessor:
         self.kg_path = self._find_valid_path(self.possible_kg_paths)
         self.cases_path = self._find_valid_path(self.possible_case_paths)
         
-        # Log found paths
         if self.kg_path:
             st.info(f"📁 Knowledge graph path: {self.kg_path}")
         if self.cases_path:
             st.info(f"📁 Cases path: {self.cases_path}")
     
     def _find_valid_path(self, possible_paths):
-        """Find the first valid path that exists"""
         for path in possible_paths:
             if os.path.exists(path):
                 return path
         return None
 
     def check_data_exists(self):
-        """Check if data directories exist and have files"""
         kg_exists = self.kg_path and os.path.exists(self.kg_path) and any(f.endswith('.json') for f in os.listdir(self.kg_path))
         cases_exists = self.cases_path and os.path.exists(self.cases_path) and any(os.path.isdir(os.path.join(self.cases_path, d)) for d in os.listdir(self.cases_path))
-        
         return kg_exists, cases_exists
 
     def count_files(self):
-        """Count all JSON files"""
         kg_count = 0
         if self.kg_path and os.path.exists(self.kg_path):
             kg_count = len([f for f in os.listdir(self.kg_path) if f.endswith('.json')])
@@ -163,15 +156,12 @@ class SimpleDataProcessor:
         return kg_count, case_count
 
     def extract_knowledge(self):
-        """Extract knowledge from KG files"""
         chunks = []
 
         if not self.kg_path or not os.path.exists(self.kg_path):
             st.error(f"❌ Knowledge graph path not found")
-            st.info(f"💡 Checked paths: {self.possible_kg_paths}")
             return chunks
 
-        # Set up progress
         files = [f for f in os.listdir(self.kg_path) if f.endswith('.json')]
         total_files = len(files)
         
@@ -193,21 +183,18 @@ class SimpleDataProcessor:
 
                 for stage_name, stage_data in knowledge.items():
                     if isinstance(stage_data, dict):
-                        # Extract risk factors
                         if stage_data.get('Risk Factors'):
                             chunks.append({
                                 'text': f"{condition} - Risk Factors: {stage_data['Risk Factors']}",
                                 'metadata': {'type': 'knowledge', 'category': 'risk_factors', 'condition': condition}
                             })
 
-                        # Extract symptoms
                         if stage_data.get('Symptoms'):
                             chunks.append({
                                 'text': f"{condition} - Symptoms: {stage_data['Symptoms']}",
                                 'metadata': {'type': 'knowledge', 'category': 'symptoms', 'condition': condition}
                             })
                 
-                # Update progress
                 progress = int(100 * (i + 1) / total_files)
                 progress_bar.progress(progress)
                 status_text.text(f"Processing knowledge files... {i+1}/{total_files}")
@@ -222,15 +209,12 @@ class SimpleDataProcessor:
         return chunks
 
     def extract_patient_cases(self):
-        """Extract patient cases and reasoning"""
         chunks = []
 
         if not self.cases_path or not os.path.exists(self.cases_path):
             st.error(f"❌ Cases path not found")
-            st.info(f"💡 Checked paths: {self.possible_case_paths}")
             return chunks
 
-        # Count total files for progress
         total_files = 0
         file_paths = []
         
@@ -250,7 +234,6 @@ class SimpleDataProcessor:
             st.warning("⚠️ No case files found")
             return chunks
 
-        # Set up progress
         progress_bar = st.progress(0)
         status_text = st.empty()
 
@@ -259,7 +242,6 @@ class SimpleDataProcessor:
             self._process_case_file(file_path, condition_folder, chunks)
             processed_files += 1
             
-            # Update progress
             progress = int(100 * processed_files / total_files)
             progress_bar.progress(progress)
             status_text.text(f"Processing case files... {processed_files}/{total_files}")
@@ -273,7 +255,6 @@ class SimpleDataProcessor:
         return chunks
 
     def _process_case_file(self, file_path, condition_folder, chunks):
-        """Process individual case file"""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -281,7 +262,6 @@ class SimpleDataProcessor:
             filename = os.path.basename(file_path)
             case_id = filename.replace('.json', '')
 
-            # Extract narrative (inputs)
             narrative_parts = []
             for i in range(1, 7):
                 key = f'input{i}'
@@ -294,7 +274,6 @@ class SimpleDataProcessor:
                     'metadata': {'type': 'narrative', 'case_id': case_id, 'condition': condition_folder}
                 })
 
-            # Extract reasoning
             for key in data:
                 if not key.startswith('input'):
                     reasoning = self._extract_reasoning(data[key])
@@ -307,7 +286,6 @@ class SimpleDataProcessor:
             st.warning(f"⚠️ Error processing {file_path}: {e}")
 
     def _extract_reasoning(self, data):
-        """Simple reasoning extraction"""
         reasoning_lines = []
 
         if isinstance(data, dict):
@@ -331,24 +309,19 @@ class SimpleDataProcessor:
         return "\n".join(reasoning_lines) if reasoning_lines else ""
 
     def run(self):
-        """Run complete extraction"""
         st.info("🚀 Starting data extraction...")
 
-        # Check if data exists
         kg_exists, cases_exists = self.check_data_exists()
         if not kg_exists and not cases_exists:
             st.error("❌ No valid data found after extraction.")
-            st.info("💡 Please check the ZIP file structure")
             return []
 
-        # Count files
         kg_count, case_count = self.count_files()
 
         if kg_count == 0 and case_count == 0:
             st.error("❌ No JSON files found in data directories.")
             return []
 
-        # Extract data
         knowledge_chunks = self.extract_knowledge()
         case_chunks = self.extract_patient_cases()
 
@@ -365,33 +338,51 @@ class SimpleRAGSystem:
     def __init__(self, chunks, db_path="./chroma_db"):
         self.chunks = chunks
         self.db_path = db_path
+        self.knowledge_collection = None
+        self.cases_collection = None
+        self.client = None
+        
         try:
-            self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+            # Clear existing database to avoid conflicts
+            if os.path.exists(db_path):
+                shutil.rmtree(db_path)
+            
+            # Use lightweight default embedding function
+            self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
             self.client = chromadb.PersistentClient(path=db_path)
+            st.info("✅ Using lightweight embedding function")
         except Exception as e:
             st.error(f"Error initializing RAG system: {e}")
 
     def create_collections(self):
         """Create separate collections for knowledge and cases"""
+        if self.client is None:
+            st.error("❌ ChromaDB client not available")
+            return False
+            
         try:
-            # Knowledge collection
             self.knowledge_collection = self.client.get_or_create_collection(
                 name="medical_knowledge",
                 embedding_function=self.embedding_function
             )
 
-            # Cases collection
             self.cases_collection = self.client.get_or_create_collection(
                 name="patient_cases",
                 embedding_function=self.embedding_function
             )
 
             st.success("✅ Created ChromaDB collections")
+            return True
         except Exception as e:
             st.error(f"Error creating collections: {e}")
+            return False
 
     def index_data(self):
         """Index all chunks into ChromaDB"""
+        if self.knowledge_collection is None or self.cases_collection is None:
+            st.error("Collections not created. Please run create_collections first.")
+            return
+
         knowledge_docs, knowledge_metas, knowledge_ids = [], [], []
         case_docs, case_metas, case_ids = [], [], []
 
@@ -404,62 +395,70 @@ class SimpleRAGSystem:
                 if chunk['metadata']['type'] == 'knowledge':
                     knowledge_docs.append(chunk['text'])
                     knowledge_metas.append(chunk['metadata'])
-                    knowledge_ids.append(f"kg_{i}")
+                    knowledge_ids.append(f"kg_{i}_{i}")  # Unique ID
                 else:
                     case_docs.append(chunk['text'])
                     case_metas.append(chunk['metadata'])
-                    case_ids.append(f"case_{i}")
+                    case_ids.append(f"case_{i}_{i}")  # Unique ID
 
-                # Update progress
-                progress = int(100 * (i + 1) / total_chunks)
-                progress_bar.progress(progress)
-                status_text.text(f"Indexing chunks... {i+1}/{total_chunks}")
+                if i % max(1, total_chunks // 20) == 0:  # Update progress less frequently
+                    progress = int(100 * (i + 1) / total_chunks)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Indexing chunks... {i+1}/{total_chunks}")
 
             progress_bar.empty()
             status_text.empty()
 
-            # Add to collections
+            # Add in batches to avoid memory issues
+            batch_size = 100
             if knowledge_docs:
-                self.knowledge_collection.add(
-                    documents=knowledge_docs,
-                    metadatas=knowledge_metas,
-                    ids=knowledge_ids
-                )
+                for j in range(0, len(knowledge_docs), batch_size):
+                    batch_end = min(j + batch_size, len(knowledge_docs))
+                    self.knowledge_collection.add(
+                        documents=knowledge_docs[j:batch_end],
+                        metadatas=knowledge_metas[j:batch_end],
+                        ids=knowledge_ids[j:batch_end]
+                    )
+                st.info(f"✅ Indexed {len(knowledge_docs)} knowledge chunks")
 
             if case_docs:
-                self.cases_collection.add(
-                    documents=case_docs,
-                    metadatas=case_metas,
-                    ids=case_ids
-                )
+                for j in range(0, len(case_docs), batch_size):
+                    batch_end = min(j + batch_size, len(case_docs))
+                    self.cases_collection.add(
+                        documents=case_docs[j:batch_end],
+                        metadatas=case_metas[j:batch_end],
+                        ids=case_ids[j:batch_end]
+                    )
+                st.info(f"✅ Indexed {len(case_docs)} case chunks")
 
-            st.success(f"✅ Indexed {len(knowledge_docs)} knowledge chunks and {len(case_docs)} case chunks")
+            st.success(f"✅ Indexing complete: {len(knowledge_docs)} knowledge + {len(case_docs)} case chunks")
         except Exception as e:
             st.error(f"Error indexing data: {e}")
 
     def query(self, question, top_k=5):
         """Simple query across both collections"""
+        if self.knowledge_collection is None or self.cases_collection is None:
+            st.error("Collections not initialized. Please re-run initialization.")
+            return []
+        
         try:
-            # Query knowledge
             knowledge_results = self.knowledge_collection.query(
                 query_texts=[question],
                 n_results=top_k
             )
 
-            # Query cases
             case_results = self.cases_collection.query(
                 query_texts=[question],
                 n_results=top_k
             )
 
-            # Combine results
             all_results = []
-            if knowledge_results['documents']:
+            if knowledge_results.get('documents') and knowledge_results['documents'][0]:
                 all_results.extend(knowledge_results['documents'][0])
-            if case_results['documents']:
+            if case_results.get('documents') and case_results['documents'][0]:
                 all_results.extend(case_results['documents'][0])
 
-            return all_results
+            return all_results[:top_k]  # Return only top_k total
         except Exception as e:
             st.error(f"Error querying RAG system: {e}")
             return []
@@ -469,18 +468,15 @@ class MedicalAI:
         self.rag = rag_system
         try:
             genai.configure(api_key=api_key)
-            # Use a more widely available model
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            self.model = genai.GenerativeModel('gemini-2.0-flash')
         except Exception as e:
             st.error(f"Error initializing Gemini: {e}")
 
     def ask(self, question):
         try:
-            # Get relevant context from RAG
             context_chunks = self.rag.query(question, top_k=5)
             context = "\n---\n".join(context_chunks)
 
-            # Create prompt WITHOUT the "what's missing" section
             prompt = f"""You are a medical expert. Use the following medical context to answer the question accurately and comprehensively.
 
 MEDICAL CONTEXT:
@@ -514,14 +510,13 @@ def main():
         st.session_state.data_extracted = False
     if 'rag_system' not in st.session_state:
         st.session_state.rag_system = None
+    if 'extractor' not in st.session_state:
+        st.session_state.extractor = None
 
     # Sidebar for configuration
     st.sidebar.header("Configuration")
-    
-    # Show API key status (hardcoded, no input needed)
     st.sidebar.success("🔑 API key configured")
     
-    # Data extraction section
     st.sidebar.subheader("📁 Data Setup")
     
     if not st.session_state.data_extracted:
@@ -533,12 +528,23 @@ def main():
                     st.session_state.extractor = extractor
                     st.rerun()
 
+    # Reset button
+    if st.sidebar.button("🗑️ Reset System"):
+        # Clear all data
+        for path in ["./chroma_db", "./data_extracted", "./data.zip"]:
+            if os.path.exists(path):
+                try:
+                    shutil.rmtree(path)
+                except:
+                    pass
+        st.session_state.clear()
+        st.rerun()
+
     # Initialize system
     if st.session_state.data_extracted and not st.session_state.initialized:
         if st.sidebar.button("🚀 Initialize System", type="primary"):
             try:
                 with st.spinner("🚀 Processing medical data and setting up RAG system... This may take a few minutes."):
-                    # Initialize processor and extract data
                     processor = SimpleDataProcessor(st.session_state.extractor.extracted_path)
                     chunks = processor.run()
 
@@ -546,18 +552,16 @@ def main():
                         st.error("❌ No data was extracted. Please check your data file structure.")
                         return
 
-                    # Initialize RAG system
                     rag_system = SimpleRAGSystem(chunks)
-                    rag_system.create_collections()
-                    rag_system.index_data()
-
-                    # Initialize Medical AI with hardcoded API key
-                    st.session_state.medical_ai = MedicalAI(rag_system, GEMINI_API_KEY)
-                    st.session_state.rag_system = rag_system
-                    st.session_state.initialized = True
-
-                st.success("✅ System initialized successfully!")
-                st.balloons()
+                    if rag_system.create_collections():
+                        rag_system.index_data()
+                        st.session_state.medical_ai = MedicalAI(rag_system, GEMINI_API_KEY)
+                        st.session_state.rag_system = rag_system
+                        st.session_state.initialized = True
+                        st.success("✅ System initialized successfully!")
+                        st.balloons()
+                    else:
+                        st.error("Failed to create database collections")
 
             except Exception as e:
                 st.error(f"❌ Error initializing system: {str(e)}")
@@ -566,14 +570,12 @@ def main():
     if st.session_state.initialized and st.session_state.medical_ai:
         st.header("💬 Medical Query Interface")
 
-        # Question input
         question = st.text_area(
             "Enter your medical question:",
-            placeholder="e.g., What are the symptoms of migraine? How is chest pain evaluated? What are risk factors for gastrointestinal bleeding?",
+            placeholder="e.g., What are the symptoms of migraine? How is chest pain evaluated?",
             height=100
         )
 
-        # Advanced options
         with st.expander("Advanced Options"):
             col1, col2 = st.columns(2)
             with col1:
@@ -584,16 +586,13 @@ def main():
         if st.button("Get Medical Answer", type="primary", use_container_width=True) and question:
             with st.spinner("🔍 Analyzing medical context and generating answer..."):
                 try:
-                    # Get answer
                     answer = st.session_state.medical_ai.ask(question)
 
-                    # Display answer
                     st.subheader("🤖 Medical Answer")
                     st.markdown(f"**Question:** {question}")
                     st.markdown("**Answer:**")
                     st.write(answer)
 
-                    # Show context if requested
                     if show_context:
                         st.subheader("📚 Retrieved Context")
                         context_chunks = st.session_state.rag_system.query(question, top_k=top_k)
@@ -605,15 +604,12 @@ def main():
                 except Exception as e:
                     st.error(f"❌ Error generating answer: {str(e)}")
 
-        # Example questions
         st.subheader("💡 Example Questions")
         examples = [
             "What are the diagnostic criteria for migraine?",
-            "How is chest pain evaluated in emergency settings?",
-            "What are common risk factors for gastrointestinal bleeding?",
-            "Describe the symptoms and diagnosis process for pneumonia",
-            "What are the treatment options for asthma?",
-            "How to diagnose and manage diabetes?"
+            "How is chest pain evaluated?",
+            "What are risk factors for gastrointestinal bleeding?",
+            "Describe symptoms of pneumonia",
         ]
 
         cols = st.columns(2)
@@ -623,7 +619,6 @@ def main():
                     st.session_state.last_question = example
                     st.rerun()
 
-        # System info
         with st.expander("📊 System Information"):
             if st.session_state.rag_system:
                 knowledge_count = len([c for c in st.session_state.rag_system.chunks if c['metadata']['type'] == 'knowledge'])
@@ -640,11 +635,10 @@ def main():
         👋 **Welcome to the Medical RAG System!**
         
         To get started:
-        1. 📥 Click 'Download & Extract Data' to get medical data from GitHub
+        1. 📥 Click 'Download & Extract Data' in the sidebar
         2. 🚀 Click 'Initialize System' to build the RAG system
         
         *API key is pre-configured*
-        *Data source: https://github.com/Mustehsan-Nisar-Rao/RAG/raw/main/mimic-iv-ext-direct-1.0.zip*
         """)
 
 if __name__ == "__main__":
