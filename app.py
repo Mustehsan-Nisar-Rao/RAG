@@ -16,7 +16,7 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 # Your existing code continues here...
 
 # Your hardcoded API key
-GEMINI_API_KEY = "AIzaSyCkwbqccRPTUd3zLqJ3A6WagcdDRsMJQCY"
+GEMINI_API_KEY = "AIzaSyAouoUIyesHCHDxR3A5xRk87NoYhacs24s"
 
 class DataExtractor:
     def __init__(self):
