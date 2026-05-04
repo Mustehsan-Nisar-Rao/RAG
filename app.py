@@ -9,6 +9,11 @@ import google.generativeai as genai
 import requests
 import zipfile
 import io
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
+# Your existing code continues here...
 
 # Your hardcoded API key
 GEMINI_API_KEY = "AIzaSyCkwbqccRPTUd3zLqJ3A6WagcdDRsMJQCY"
