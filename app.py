@@ -23,7 +23,7 @@ import shutil
 # Prefer Streamlit secrets (Settings -> Secrets on Streamlit Cloud):
 #   GEMINI_API_KEY = "your-key-here"
 # Falls back to hardcoded value only if secrets aren't set (not recommended).
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "AIzaSyAouoUIyesHCHDxR3A5xRk87NoYhacs24s")
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
 
 
 class DataExtractor:
