@@ -488,7 +488,7 @@ class MedicalAI:
         self.rag = rag_system
         try:
             genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            self.model = genai.GenerativeModel('gemini-3.6-flash')
         except Exception as e:
             st.error(f"Error initializing Gemini: {e}")
 
